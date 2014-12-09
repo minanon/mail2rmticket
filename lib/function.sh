@@ -3,45 +3,31 @@ register_main()
     local from=${1}
     local to=${2}
     local body=${3}
-    local auth=${4}
-    local apikey=${5}
+    local access_info=${4}
 
     echo ${to} 1>&2
     echo ${from} 1>&2
-
-    local access_info=$(split_addr "${to}")
-
+    echo -e ${body} 1>&2
     echo ${access_info} 1>&2
-
-    if ! check_apikey "${access_info}" "${apikey}"
-    then
-        return 1
-    fi
 
 }
 
 parse_access_info()
 {
-    local return_value=''
     local access_info_str=$(echo ${1} | base64 -d | cut -d '' -f 1 | tail -n 2)
     local access_to=$(echo "${access_info_str}" | head -n 1)
     local api_key=$(echo "${access_info_str}" | tail -n 1)
 
-    echo "${access_to/@/://} ${api_key}" 1>&2
-    echo -n "${access_to/@/://} ${api_key}"
-}
+    local proto_host=( ${access_to/@/ } )
+    local proto=${proto_host[0]}
 
-split_addr()
-{
-    local return_value=''
-    local split=( ${1/@/ } )
+    local host_port=( ${proto_host[1]/:/ } )
+    local host=${host_port[0]}
 
-    local access=( ${split[1]/./ } )
-    local hosts=( ${access[1]/:/ } )
-    local port=${hosts[1]:-''}
+    local port=${host_port[1]:-''}
     if [ ! "${port}" ]
     then
-        case "${access[0]}" in
+        case "${proto}" in
             https)
                 port=443
                 ;;
@@ -51,59 +37,49 @@ split_addr()
         esac
     fi
 
-    return_value+="${split[0]/./ } ${access[0]} ${hosts[0]} ${port}"
-
-    echo ${return_value}
+    echo -n "${proto} ${host} ${port} ${api_key}"
 }
 
 check_apikey()
 {
-    local access_info=($1)
-    local key=$2
+    local proto=${1}
+    local host=${2}
+    local key=${3}
 
-    local ticket_id=${access_info[0]}
-    local project_id=${access_info[1]}
-    local proto=${access_info[2]}
-    local host=${access_info[3]}
-
-    echo ${ticket_id} 1>&2
-    echo ${project_id} 1>&2
-    echo ${proto} 1>&2
-    echo ${host} 1>&2
-
-
-    #ip
-    #http://192.168.1.123/projects.xml?key=228006758d11d8f6373488d8fd63401a6fd2bb67
-
-    if [ "${to}" ]
+    if $(request "GET" "/projects.json" "${@}" | grep 'HTTP/1.1 2' >/dev/null)
     then
-        return 5
+        return 0
     else
-        # empty to
         return 1
     fi
-
-    if [ ! "${key}" ]
-    then
-        # empty key
-        return 2
-    fi
-
-    return 1
 }
 
-get_request()
+request()
 {
-    local access_info=${1}
-    local apikey=${2}
-    local path=${3}
+    local method=${1}
+    local path=${2}
+    local proto=${3}
+    local host=${4}
+    local port=${5}
+    local key=${6}
+
+    case "${path}" in
+        *\?*)
+            path+="&key=${key}"
+            ;;
+        *)
+            path+="?key=${key}"
+            ;;
+    esac
 
     local cmd="nc -C ${host} ${port}"
-    if [ "${proto}" != "http" ]
+    if [ "${proto}" = "https" ]
     then
         cmd="openssl s_client -crlf -connect ${host}:${port}"
     fi
+
     (
-        echo 'GET / '
+        echo -ne "${method} ${path} HTTP/1.1\nHost: ${host}\n\n"
+        sleep 1
     ) | ${cmd}
 }

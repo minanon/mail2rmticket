@@ -6,6 +6,11 @@ current_dir=$(dirname ${0})
 . ${current_dir}/lib/default_config.sh
 . ${current_dir}/lib/function.sh
 
+if [ -f "${current_dir}/config.sh" ]
+then
+    . ${current_dir}/config.sh
+fi
+
 rm -f ${fifo_path}
 mkfifo ${fifo_path}
 
@@ -80,8 +85,11 @@ do
                     auth=${line#*PLAIN }
 
                     access_info=$(parse_access_info "${auth}")
-                    apikey=$(echo ${auth} | base64 -d |cut -d '' -f 1| tail -n 1)
-                    exit
+                    if ! check_apikey ${access_info}
+                    then
+                        echo '535 5.7.8 Error: authentication failed: Invalid authentication.'
+                        exit
+                    fi
                     ;;
                 "AUTH"*)
                     echo '535 5.7.8 Error: authentication failed: Invalid authentication.'
@@ -98,7 +106,7 @@ do
             esac
         done < ${fifo_path}
 
-        register_main "${from}" "${to}" "${body}" "${auth}" "${apikey}" &
+        register_main "${from}" "${to}" "${body}" "${access_info}" &
 
     ) | nc -l ${listen_ip} ${listen_port} > ${fifo_path}
 
