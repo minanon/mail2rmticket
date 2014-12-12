@@ -12,3 +12,17 @@ debug=true
 
 # 処理後、再待ち受けするか
 re_listen=false
+
+# フォーマット
+comment_format='
+|_. 送信日 |${date}|
+|_. 差出人 |${from}|
+|_. 宛先   |${from}|
+|_. CC     |${cc}  |
+|_. 件名   |${subject}|
+
+本文
+<pre>
+${body}
+</pre>
+'

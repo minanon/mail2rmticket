@@ -119,32 +119,4 @@ do
 
 done
 
-
-#$ nc -l 43001
-#220 OK
-#EHLO [127.0.0.1]
-#250 OK
-#MAIL FROM:<yoshio@interlink-j.com>
-#250 OK
-#RCPT TO:<hoge@hoge.hoge>
-#250 OK
-#DATA
-#354 OK
-#Message-ID: <547D18B1.5070104@interlink-j.com>
-#Date: Tue, 02 Dec 2014 10:41:05 +0900
-#From: =?ISO-2022-JP?B?GyRCQTBFRBsoQiAbJEJOSUlXGyhC?=
-# <yoshio@interlink-j.com>
-# User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:24.0) Gecko/20100101 Thunderbird/24.6.0
-# MIME-Version: 1.0
-# To: hoge@hoge.hoge
-# Subject: a
-# Content-Type: text/plain; charset=ISO-2022-JP
-# Content-Transfer-Encoding: 7bit
-#
-# bb
-# .
-# 250 OK
-# QUIT
-# 221 OK
-
 rm -f ${fifo_path}
