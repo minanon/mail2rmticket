@@ -13,11 +13,11 @@ debug=true
 # 処理後、再待ち受けするか
 re_listen=false
 
-# フォーマット
+# メール内容フォーマット
 comment_format='
 |_. 送信日 |${date}|
 |_. 差出人 |${from}|
-|_. 宛先   |${from}|
+|_. 宛先   |${to}|
 |_. CC     |${cc}  |
 |_. 件名   |${subject}|
 
@@ -25,4 +25,11 @@ comment_format='
 <pre>
 ${body}
 </pre>
+'
+
+# 送信データフォーマット
+send_data_format='<issue>
+  <subject>${subject}</subject>
+  <description>${description}</description>
+</issue>
 '

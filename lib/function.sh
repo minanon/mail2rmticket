@@ -101,6 +101,9 @@ parse_header()
                 boundary=${boundary#\"}
                 boundary=${boundary%\"}
                 ;;
+            *)
+                mode=""
+                ;;
         esac
     done < <(echo -ne "${1}")
 
@@ -254,15 +257,56 @@ register_ticket()
     local access_info=( ${1} )
     local ticket_id=${2}
     local project_id=${3}
-    local subject=${4}
-    local contents=${5}
+    local ticket_subject=${4}
+    local ticket_contents=${5}
     local message_header=${6}
     local message_subject=${7}
     local message_body=${8}
 
-    echo "${message_header}" >&2
+    eval "local headers=(${message_header})"
+    local date=${headers[0]}
+    local from=${headers[1]}
+    from=${from#*<}
+    from=${from%>*}
+    IFS=','
+    local tos=(${headers[2]})
+    local ccs=(${headers[3]})
 
-    return
+    local to=""
+    for to1 in ${tos[@]}
+    do
+        to1=${to1#*<}
+        to1=${to1%>*}
+        if [ "${to}" ]
+        then
+            to+="\n"
+        fi
+        to+=${to1}
+    done
+
+    local cc=""
+    for cc1 in ${ccs[@]}
+    do
+        cc1=${cc1#*<}
+        cc1=${cc1%>*}
+        if [ "${cc}" ]
+        then
+            cc+="\n"
+        fi
+        cc+=${cc1}
+    done
+
+    local subject=${message_subject}
+    local body=${message_body}
+    body=$(eval 'echo "'${comment_format}'"')
+
+
+    subject=${ticket_subject}
+    local description="${ticket_contents}
+
+${body}
+"
+    local data=$(eval 'echo "'${send_data_format}'"')
 
     local method=''
     local path="/project/${project_id}"
@@ -277,7 +321,8 @@ register_ticket()
             ;;
     esac
 
-    request \
+    #request \
+    reqtest \
         "${method}" \
         "${path}" \
         "${access_info[0]}" \
@@ -285,6 +330,24 @@ register_ticket()
         "${access_info[2]}" \
         "${access_info[3]}" \
         "${data}"
+}
+
+reqtest()
+{
+    local method=${1}
+    local path=${2}
+    local proto=${3}
+    local host=${4}
+    local port=${5}
+    local key=${6}
+    local data=${7:-''}
+
+
+    data=${data///\r\n}
+    len=$(echo -ne "${data}" | wc -c)
+
+    echo -ne "${data}" 1>&2
+    echo -ne "${len}" 1>&2
 }
 
 request()
@@ -306,6 +369,8 @@ request()
             ;;
     esac
 
+    local header_opt=""
+
     local cmd="nc -C ${host} ${port}"
     if [ "${proto}" = "https" ]
     then
@@ -313,7 +378,21 @@ request()
     fi
 
     (
-        echo -ne "${method} ${path} HTTP/1.1\nHost: ${host}\n\n"
+        echo -ne "${method} ${path} HTTP/1.1\nHost: ${host}\n"
+
+        if [ "${data}" ] && [ "${proto}" = 'POST' -o "${proto}" = 'PUT' ]
+        then
+            echo "Content-Type: application/x-www-form-urlencoded"
+            echo "CContent-Length: "
+        fi
+
+        echo -ne "\n"
+
+        if [ "${data}" ]
+        then
+            echo -ne "${data}\n"
+        fi
+
         sleep 1
     ) | ${cmd}
 }

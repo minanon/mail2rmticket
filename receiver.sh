@@ -14,6 +14,8 @@ fi
 rm -f ${fifo_path}
 mkfifo ${fifo_path}
 
+echo "listen ${listen_ip} ${listen_port}"
+
 while true
 do
     (
