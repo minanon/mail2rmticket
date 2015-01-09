@@ -33,6 +33,7 @@ do
         datamode=false
         while read -r line
         do
+            line=$(echo ${line} | tr -d '\r')
 
             if ${debug}
             then

@@ -28,9 +28,9 @@ register_main()
 
 parse_access_info()
 {
-    local access_info_str=$(echo ${1} | base64 -d | cut -d '' -f 1 | tail -n 2)
-    local access_to=$(echo "${access_info_str}" | head -n 1)
-    local api_key=$(echo "${access_info_str}" | tail -n 1)
+    local access_infos=( $(echo ${1} | base64 -d | cut -d '' --output-delimiter=' ' -f 2,3) )
+    local access_to=${access_infos[0]}
+    local api_key=${access_infos[1]}
 
     local proto_host=( ${access_to/@/ } )
     local proto=${proto_host[0]}
@@ -252,6 +252,14 @@ check_apikey()
     fi
 }
 
+get_msg()
+{
+    var_name_base=$1
+    var_name=${1}_${message_lang}
+
+    eval 'echo "${'$var_name'}"'
+}
+
 register_ticket()
 {
     local access_info=( ${1} )
@@ -298,7 +306,8 @@ register_ticket()
 
     local subject=${message_subject}
     local body=${message_body}
-    body=$(eval 'echo "'${comment_format}'"')
+    local comment_base=$(get_msg comment_format)
+    body=$(eval 'echo "'${comment_base}'"')
 
 
     subject=${ticket_subject}
@@ -306,30 +315,33 @@ register_ticket()
 
 ${body}
 "
-    local data=$(eval 'echo "'${send_data_format}'"')
-
+    local data=''
     local method=''
-    local path="/project/${project_id}"
+    local path=""
     case "${ticket_id}" in
         'new')
             method='POST'
-            path+=".xml"
+            path="/projects/${project_id}/issues.xml"
+            data=$(eval 'echo "'${send_data_format_new}'"')
             ;;
-        '*')
+        *)
             method='PUT'
-            path+="/${ticket_id}.xml"
+            path="/issues/${ticket_id}.xml"
+            data=$(eval 'echo "'${send_data_format_edit}'"')
             ;;
     esac
 
-    #request \
-    reqtest \
+    #res=$(reqtest \
+    res=$(request \
         "${method}" \
         "${path}" \
         "${access_info[0]}" \
         "${access_info[1]}" \
         "${access_info[2]}" \
         "${access_info[3]}" \
-        "${data}"
+        "${data}")
+
+    echo "${res}" >&2
 }
 
 reqtest()
@@ -348,6 +360,8 @@ reqtest()
 
     echo -ne "${data}" 1>&2
     echo -ne "${len}" 1>&2
+
+    echo -ne "${data}" >&2
 }
 
 request()
@@ -371,30 +385,32 @@ request()
 
     local header_opt=""
 
-    local cmd="nc -C ${host} ${port}"
+    local cmd="nc ${host} ${port}"
     if [ "${proto}" = "https" ]
     then
         cmd="openssl s_client -crlf -connect ${host}:${port}"
     fi
 
+    eval '
     (
-        echo -ne "${method} ${path} HTTP/1.1\nHost: ${host}\n"
+        echo -ne "${method} ${path} HTTP/1.1\r\n"
+        echo -ne "Host: ${host}\r\n"
 
-        if [ "${data}" ] && [ "${proto}" = 'POST' -o "${proto}" = 'PUT' ]
+        if [ "${data}" ] && [ "${method}" = "POST" -o "${method}" = "PUT" ]
         then
-            echo "Content-Type: application/x-www-form-urlencoded"
-            echo "CContent-Length: "
+            len=$(echo -ne "${data}" | wc -c)
+
+            echo -ne "Content-Type: text/xml; charset=UTF8\r\n"
+            echo -ne "Content-Length: ${len}\r\n\r\n"
+
+            echo -ne "${data}"
+
         fi
 
-        echo -ne "\n"
-
-        if [ "${data}" ]
-        then
-            echo -ne "${data}\n"
-        fi
+        echo -ne "\r\n"
 
         sleep 1
-    ) | ${cmd}
+    ) | '${cmd}
 }
 
 decode_mime_string()
