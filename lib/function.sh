@@ -293,16 +293,19 @@ register_ticket()
     done
 
     local cc=""
-    for cc1 in ${ccs[@]}
-    do
-        cc1=${cc1#*<}
-        cc1=${cc1%>*}
-        if [ "${cc}" ]
-        then
-            cc+="\n"
-        fi
-        cc+=${cc1}
-    done
+    if [ -v ccs ] && [ ${#ccs} -ne 0 ]
+    then
+        for cc1 in ${ccs[@]}
+        do
+            cc1=${cc1#*<}
+            cc1=${cc1%>*}
+            if [ "${cc}" ]
+            then
+                cc+="\n"
+            fi
+            cc+=${cc1}
+        done
+    fi
 
     local subject=${message_subject}
     local body=${message_body}
