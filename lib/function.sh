@@ -115,7 +115,7 @@ parse_subject()
     local subject_str=$(echo -e "${1}" | grep -E '^Subject: ' | head -n 1)
     subject_str=${subject_str#*: }
 
-    echo "$(decode_mime_string ${subject_str})"
+    decode_mime_string "${subject_str}"
 }
 
 parse_contents()
@@ -281,16 +281,19 @@ register_ticket()
     local ccs=(${headers[3]})
 
     local to=""
-    for to1 in ${tos[@]}
-    do
-        to1=${to1#*<}
-        to1=${to1%>*}
-        if [ "${to}" ]
-        then
-            to+="\n"
-        fi
-        to+=${to1}
-    done
+    if [ -v tos ] && [ ${#tos} -ne 0 ]
+    then
+        for to1 in ${tos[@]}
+        do
+            to1=${to1#*<}
+            to1=${to1%>*}
+            if [ "${to}" ]
+            then
+                to+="\n"
+            fi
+            to+=${to1}
+        done
+    fi
 
     local cc=""
     if [ -v ccs ] && [ ${#ccs} -ne 0 ]
@@ -334,17 +337,31 @@ ${body}
             ;;
     esac
 
-    #res=$(reqtest \
-    res=$(request \
-        "${method}" \
-        "${path}" \
-        "${access_info[0]}" \
-        "${access_info[1]}" \
-        "${access_info[2]}" \
-        "${access_info[3]}" \
-        "${data}")
+    if ${testmode}
+    then
+        res=$(reqtest \
+            "${method}" \
+            "${path}" \
+            "${access_info[0]}" \
+            "${access_info[1]}" \
+            "${access_info[2]}" \
+            "${access_info[3]}" \
+            "${data}")
 
-    echo "${res}" >&2
+        echo "${res}" >&2
+    else
+        res=$(request \
+            "${method}" \
+            "${path}" \
+            "${access_info[0]}" \
+            "${access_info[1]}" \
+            "${access_info[2]}" \
+            "${access_info[3]}" \
+            "${data}")
+
+        echo "${res}" >&2
+    fi
+
 }
 
 reqtest()

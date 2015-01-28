@@ -10,6 +10,9 @@ fifo_path=/tmp/redmine_mail_receiver
 # デバッグモード
 debug=false
 
+# テストモード（Redmine非登録で、標準出力する）
+testmode=false
+
 # 処理後、再待ち受けするか
 re_listen=false
 
