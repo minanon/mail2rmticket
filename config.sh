@@ -1,3 +1,4 @@
 listen_ip=''
-debug=true
+debug=false
 testmode=false
+re_listen=false

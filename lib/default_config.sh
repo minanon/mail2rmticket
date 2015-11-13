@@ -14,7 +14,7 @@ debug=false
 testmode=false
 
 # 処理後、再待ち受けするか
-re_listen=false
+re_listen=true
 
 # メッセージ言語
 message_lang='ja'
@@ -28,9 +28,9 @@ comment_format_en='
 |_. Subject   |${subject}|
 
 Message
-&lt;pre&gt;
+<pre>
 ${body}
-&lt;/pre&gt;
+</pre>
 '
 
 comment_format_ja='
@@ -41,9 +41,9 @@ comment_format_ja='
 |_. 件名   |${subject}|
 
 本文
-&lt;pre&gt;
+<pre>
 ${body}
-&lt;/pre&gt;
+</pre>
 '
 
 # 送信データフォーマット

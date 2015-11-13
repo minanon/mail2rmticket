@@ -16,6 +16,8 @@ register_main()
     local message_subject=$(parse_message_subject "${body}")
     local message_body=$(parse_message_body "${body}")
 
+    echo ${message_header} >&2
+
     register_ticket "${access_info}" \
         "${ticket_id}" \
         "${project_id}" \
@@ -28,14 +30,14 @@ register_main()
 
 parse_access_info()
 {
-    local access_infos=( $(echo ${1} | base64 -d | cut -d '' --output-delimiter=' ' -f 2,3) )
+    local access_infos=( $(echo "${1}" | base64 -d | cut -d '' --output-delimiter=' ' -f 2,3) )
     local access_to=${access_infos[0]}
     local api_key=${access_infos[1]}
 
-    local proto_host=( ${access_to/@/ } )
+    local proto_host=( $( echo "${access_to}" | sed -e 's/@/ /' ) )
     local proto=${proto_host[0]}
 
-    local host_port=( ${proto_host[1]/:/ } )
+    local host_port=( $( echo "${proto_host[1]}" | sed -e 's/:/ /' ) )
     local host=${host_port[0]}
 
     local port=${host_port[1]:-''}
@@ -244,12 +246,7 @@ check_apikey()
     local host=${2}
     local key=${3}
 
-    if $(request "GET" "/projects.json" "${@}" | grep 'HTTP/1.1 2' >/dev/null)
-    then
-        return 0
-    else
-        return 1
-    fi
+    request "GET" "/projects.json" "${@}" | grep 'HTTP/1.1 2' >/dev/null
 }
 
 get_msg()
@@ -313,11 +310,10 @@ register_ticket()
     local subject=${message_subject}
     local body=${message_body}
     local comment_base=$(get_msg comment_format)
-    body=$(eval 'echo "'${comment_base}'"')
+    body=$(eval 'echo "'${comment_base}'"' | sed -e 's/</\&lt;/' -e 's/>/\&gt;/')
 
-
-    subject=${ticket_subject}
-    local description="${ticket_contents}
+    subject=$( echo "${ticket_subject}" | sed -e 's/</\&lt;/' -e 's/>/\&gt;/' )
+    local description="$( echo "${ticket_contents}" | sed -e 's/</\&lt;/' -e 's/>/\&gt;/' )
 
 ${body}
 "
@@ -375,7 +371,7 @@ reqtest()
     local data=${7:-''}
 
 
-    data=${data///\r\n}
+    data=$( echo "${data}" | sed -e 's//\r\n/g' )
     len=$(echo -ne "${data}" | wc -c)
 
     echo -ne "${data}" 1>&2
@@ -403,13 +399,8 @@ request()
             ;;
     esac
 
-    local header_opt=""
-
     local cmd="nc ${host} ${port}"
-    if [ "${proto}" = "https" ]
-    then
-        cmd="openssl s_client -crlf -connect ${host}:${port}"
-    fi
+    [ "${proto}" = "https" ] && cmd="openssl s_client -crlf -connect ${host}:${port}"
 
     eval '
     (
@@ -439,7 +430,7 @@ decode_mime_string()
 
     case "${mimed_str}" in
         *=?*)
-            local mimed_info=( ${mimed_str//\?/ } )
+            local mimed_info=( $( echo "${mimed_str}" | sed -e 's/\?/ /g' ) )
 
             local encode=${mimed_info[1]}
             local type=${mimed_info[2]}
@@ -447,7 +438,7 @@ decode_mime_string()
 
             case ${type} in
                 B)
-                    echo "${enc_mimed}" | base64 -d | iconv -f ${encode} -t 'UTF-8'
+                    echo "${enc_mimed}" | base64 -d | iconv -f "${encode}" -t 'UTF-8'
                     ;;
                 *)
                     return 1

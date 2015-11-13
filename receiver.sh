@@ -73,15 +73,13 @@ do
                 "MAIL FROM"*)
                     #MAIL FROM:<mail address>
                     from=${line#MAIL FROM:}
-                    from=${from/</}
-                    from=${from/>/}
+                    from=$(echo "${from}" | sed -e 's/<//' -e 's/>//')
                     ;;
                 # TO
                 "RCPT TO"*)
                     #RCPT TO:<mail address>
                     to=${line#RCPT TO:}
-                    to=${to/</}
-                    to=${to/>/}
+                    to=$(echo "${to}" | sed -e 's/<//' -e 's/>//')
                     ;;
                 "AUTH PLAIN"*)
                     # AUTH
@@ -91,7 +89,7 @@ do
                     if ! check_apikey ${access_info}
                     then
                         echo '535 5.7.8 Error: authentication failed: Invalid authentication.'
-                        exit
+                        continue
                     fi
                     ;;
                 "AUTH"*)
@@ -113,12 +111,7 @@ do
 
     ) | nc -l ${listen_ip} ${listen_port} > ${fifo_path}
 
-    if ${re_listen}
-    then
-        echo -n
-    else
-        break
-    fi
+    ${re_listen} || break
 
 done
 
