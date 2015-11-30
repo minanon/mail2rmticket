@@ -21,11 +21,11 @@ message_lang='ja'
 
 # メール内容フォーマット
 comment_format_en='
-|_. Send Date |${date}|
-|_. Sender |${from}|
-|_. Receiver   |${to}|
-|_. CC     |${cc}  |
-|_. Subject   |${subject}|
+|_. Send Date|${date}   |
+|_. Sender   |${from}   |
+|_. Receiver |${to}     |
+|_. CC       |${cc}     |
+|_. Subject  |${subject}|
 
 Message
 <pre>
@@ -54,7 +54,6 @@ send_data_format_new='<issue>
 '
 
 send_data_format_edit='<issue>
-  <subject>${subject}</subject>
   <notes>${description}</notes>
 </issue>
 '

@@ -2,30 +2,142 @@ register_main()
 {
     local from=${1}
     local to=${2}
-    local body=${3}
-    local access_info=${4}
+    local org_body=${3}
+    local access_info=( ${4} )
 
     # information
     local ticket_id=${to%%@*}
     local project_id=${to#*@}
 
-    local subject=$(parse_subject "${body}")
-    local contents=$(parse_contents "${body}")
+    local ticket_subject=$(parse_subject "${org_body}")
+    local ticket_contents=$(parse_contents "${org_body}")
 
-    local message_header=$(parse_message_header "${body}")
-    local message_subject=$(parse_message_subject "${body}")
-    local message_body=$(parse_message_body "${body}")
+    local message_header=$(parse_message_header "${org_body}")
+    local message_subject=$(parse_message_subject "${org_body}")
+    local message_body=$(parse_message_body "${org_body}")
+    local message_attached=()
+    parse_attached_file 'message_attached' "${org_body}"
 
-    echo ${message_header} >&2
 
-    register_ticket "${access_info}" \
-        "${ticket_id}" \
-        "${project_id}" \
-        "${subject}" \
-        "${contents}" \
-        "${message_header}" \
-        "${message_subject}" \
-        "${message_body}"
+    eval "local headers=(${message_header})"
+    local date=${headers[0]}
+    local from=${headers[1]}
+    from=${from#*<}
+    from=${from%>*}
+    local OLD_IFS=${IFS}
+    IFS=','
+    local tos=(${headers[2]})
+    local ccs=(${headers[3]})
+    IFS=${OLD_IFS}
+
+    local to=""
+    if [ -v tos ] && [ ${#tos} -ne 0 ]
+    then
+        for to1 in "${tos[@]}"
+        do
+            to1=${to1#*<}
+            to1=${to1%>*}
+            if [ "${to}" ]
+            then
+                to+="\n"
+            fi
+            to+=${to1}
+        done
+    fi
+
+    local cc=""
+    if [ -v ccs ] && [ ${#ccs} -ne 0 ]
+    then
+        for cc1 in "${ccs[@]}"
+        do
+            cc1=${cc1#*<}
+            cc1=${cc1%>*}
+            if [ "${cc}" ]
+            then
+                cc+="\n"
+            fi
+            cc+=${cc1}
+        done
+    fi
+
+    local subject=${message_subject}
+    local body=${message_body}
+    local comment_base=$(get_msg comment_format)
+    body=$(eval 'echo "'"${comment_base}"'"' | sed -e 's/</\&lt;/' -e 's/>/\&gt;/')
+
+    subject=$( echo "${ticket_subject}" | sed -e 's/</\&lt;/' -e 's/>/\&gt;/' )
+    local description="$( echo "${ticket_contents}" | sed -e 's/</\&lt;/' -e 's/>/\&gt;/' )
+
+${body}
+"
+    local data=''
+    local method=''
+    local path=""
+    case "${ticket_id}" in
+        'new')
+            method='POST'
+            path="/projects/${project_id}/issues.xml"
+            data=$(eval 'echo "'${send_data_format_new}'"')
+            ;;
+        *)
+            method='PUT'
+            path="/issues/${ticket_id}.xml"
+            data=$(eval 'echo "'${send_data_format_edit}'"')
+            ;;
+    esac
+
+    if ${testmode}
+    then
+        res=$(reqtest \
+            "${method}" \
+            "${path}" \
+            "${access_info[0]}" \
+            "${access_info[1]}" \
+            "${access_info[2]}" \
+            "${access_info[3]}" \
+            "${data}")
+
+        echo "${res}" >&2
+    else
+        local tokens=()
+        [ ${#message_attached[@]} -ne 0 ] && upload 'tokens' \
+            "${access_info[0]}" \
+            "${access_info[1]}" \
+            "${access_info[2]}" \
+            "${access_info[3]}" \
+            "${message_attached[@]}"
+
+        local con=( $(parse_message "${org_body}") )
+        upload 'attach_content' "${access_info[0]}" \
+            "${access_info[1]}" \
+            "${access_info[2]}" \
+            "${access_info[3]}" \
+            "\nContent-Type: message/rfc822\nfilename: ${subject}\n\n$(parse_message "${org_body}")"
+
+        token_str='<uploads type="array">'$(
+            for token_info in "${tokens[@]-}" "${attach_content}"
+            do
+                [ ! "${token_info}" ] && continue
+                local token="${token_info%%,*}"
+                local type="${token_info#*,}"; type="${type%%,*}"
+                local name="${token_info#*,}"; name="${name#*,}"
+                echo -n "<upload><token>${token}</token><content_type>${type}</content_type><filename>${name}</filename></upload>"
+            done
+        )'</uploads>'
+        data=$(echo "${data}" | sed -e "s|</issue>|${token_str}</issue>|")
+
+        res=$(request \
+            "${method}" \
+            "${path}" \
+            "${access_info[0]}" \
+            "${access_info[1]}" \
+            "${access_info[2]}" \
+            "${access_info[3]}" \
+            "${data}")
+
+        echo "${res}" >&2
+    fi
+
 }
 
 parse_access_info()
@@ -91,7 +203,7 @@ parse_header()
                 mode="To"
                 to+=${line#*: }
                 ;;
-            CC:*|CC:*)
+            Cc:*|CC:*)
                 mode="Cc"
                 cc+=${line#*: }
                 ;;
@@ -114,26 +226,31 @@ parse_header()
 
 parse_subject()
 {
-    local subject_str=$(echo -e "${1}" | grep -E '^Subject: ' | head -n 1)
-    subject_str=${subject_str#*: }
+    local body="${1}"
+    local subject_start=$(echo -e "${body}" | grep -nE '^Subject: ' | head -n 1 | cut -f'1' -d':' )
+    local subject=$( decode_subject_mime "$(echo -e "${body}" | sed -ne "${subject_start}{ s/^Subject: \+//; p}" )" )
+    for ((i=$subject_start+1; ; i++))
+    do
+        echo -e "${body}" | head -n ${i} | tail -n 1 | grep -E '^.+:|^$' >/dev/null \
+            && break \
+            || subject+=$( decode_subject_mime "$(echo -e "${body}" | sed -ne "${i}p")" )
+    done
 
-    decode_mime_string "${subject_str}"
+    echo "${subject}"
 }
 
 parse_contents()
 {
-    local body=${1}
-    local boundary=$(echo -e "${body}" | grep -E '^boundary=' | head -n 1)
-    boundary=${boundary#*=}
+    local body="${1}"
+    local boundary=$(echo -e "${body}" | grep -E '^boundary=|^Content-Type:.*boundary=' | head -n 1)
+    boundary=${boundary#*boundary=}
     boundary=${boundary#\"}
     boundary=${boundary%\"}
 
     local inbody=${body#*${boundary}}
     inbody=${inbody#*${boundary}}
-    inbody=${inbody%${boundary}--*}
-
-    local contents_all=${inbody%--${boundary}*}
-    parse_mail_body "${contents_all}"
+    inbody=${inbody%%--${boundary}*}
+    parse_mail_body "${inbody}"
 }
 
 parse_mail_body()
@@ -157,6 +274,7 @@ parse_mail_body()
             case "${line}" in
                 'Content-Type: '*)
                     charset=${line#*charset=}
+                    charset=${charset%;*}
                     ;;
                 'Content-Transfer-Encoding: '*)
                     encode=${line#*: }
@@ -236,8 +354,40 @@ parse_message_subject()
 
 parse_message_body()
 {
-    local info=$(parse_message "${1}")
-    parse_mail_body "${info}"
+    local content=$(parse_message "${1}")
+    if echo -e "${content}" | grep 'Content-Type:' | head -n1 | grep 'multipart/' >/dev/null
+    then
+        parse_contents "${content}"
+    else
+        parse_mail_body "${content}"
+    fi
+}
+
+parse_attached_file()
+{
+    local var=${1}
+    local content=$(parse_message "${2}")
+    echo -e "${content}" | grep 'Content-Type:' | head -n1 | grep 'multipart/' >/dev/null \
+        || return 0
+
+    local boundary=$(echo -e "${content}" | grep -E '^boundary=|^Content-Type:.*boundary=' | head -n 1)
+    boundary=${boundary#*boundary=}
+    boundary=${boundary#\"}
+    boundary=${boundary%\"}
+
+    local inbody=${content#*${boundary}}
+    inbody=${inbody#*${boundary}}
+    inbody=${inbody#*${boundary}}
+    inbody="${inbody%--${boundary}*}${boundary}"
+
+    local arr=()
+    while [ "${inbody}" ]
+    do
+        arr+=( "${inbody%%${boundary}*}" )
+        inbody=${inbody#*${boundary}}
+    done
+
+    eval "${var}"'=( "${arr[@]}" )'
 }
 
 check_apikey()
@@ -255,109 +405,6 @@ get_msg()
     var_name=${1}_${message_lang}
 
     eval 'echo "${'$var_name'}"'
-}
-
-register_ticket()
-{
-    local access_info=( ${1} )
-    local ticket_id=${2}
-    local project_id=${3}
-    local ticket_subject=${4}
-    local ticket_contents=${5}
-    local message_header=${6}
-    local message_subject=${7}
-    local message_body=${8}
-
-    eval "local headers=(${message_header})"
-    local date=${headers[0]}
-    local from=${headers[1]}
-    from=${from#*<}
-    from=${from%>*}
-    IFS=','
-    local tos=(${headers[2]})
-    local ccs=(${headers[3]})
-
-    local to=""
-    if [ -v tos ] && [ ${#tos} -ne 0 ]
-    then
-        for to1 in ${tos[@]}
-        do
-            to1=${to1#*<}
-            to1=${to1%>*}
-            if [ "${to}" ]
-            then
-                to+="\n"
-            fi
-            to+=${to1}
-        done
-    fi
-
-    local cc=""
-    if [ -v ccs ] && [ ${#ccs} -ne 0 ]
-    then
-        for cc1 in ${ccs[@]}
-        do
-            cc1=${cc1#*<}
-            cc1=${cc1%>*}
-            if [ "${cc}" ]
-            then
-                cc+="\n"
-            fi
-            cc+=${cc1}
-        done
-    fi
-
-    local subject=${message_subject}
-    local body=${message_body}
-    local comment_base=$(get_msg comment_format)
-    body=$(eval 'echo "'${comment_base}'"' | sed -e 's/</\&lt;/' -e 's/>/\&gt;/')
-
-    subject=$( echo "${ticket_subject}" | sed -e 's/</\&lt;/' -e 's/>/\&gt;/' )
-    local description="$( echo "${ticket_contents}" | sed -e 's/</\&lt;/' -e 's/>/\&gt;/' )
-
-${body}
-"
-    local data=''
-    local method=''
-    local path=""
-    case "${ticket_id}" in
-        'new')
-            method='POST'
-            path="/projects/${project_id}/issues.xml"
-            data=$(eval 'echo "'${send_data_format_new}'"')
-            ;;
-        *)
-            method='PUT'
-            path="/issues/${ticket_id}.xml"
-            data=$(eval 'echo "'${send_data_format_edit}'"')
-            ;;
-    esac
-
-    if ${testmode}
-    then
-        res=$(reqtest \
-            "${method}" \
-            "${path}" \
-            "${access_info[0]}" \
-            "${access_info[1]}" \
-            "${access_info[2]}" \
-            "${access_info[3]}" \
-            "${data}")
-
-        echo "${res}" >&2
-    else
-        res=$(request \
-            "${method}" \
-            "${path}" \
-            "${access_info[0]}" \
-            "${access_info[1]}" \
-            "${access_info[2]}" \
-            "${access_info[3]}" \
-            "${data}")
-
-        echo "${res}" >&2
-    fi
-
 }
 
 reqtest()
@@ -380,6 +427,59 @@ reqtest()
     echo -ne "${data}" >&2
 }
 
+upload()
+{
+    local var="${1}"
+    local proto=${2}
+    local host=${3}
+    local port=${4}
+    local key=${5}
+    local attaches=( "${@:6}" )
+    local path="/uploads.xml"
+    local _tokens=()
+
+    for attach in "${attaches[@]}"
+    do
+        local type=""
+        local name=""
+        local body=""
+        local count=0
+        local is_body=false
+        while read -r line
+        do
+            count=$(( ${count} + 1 ))
+            [ ${count} -eq 1 ] && continue
+            if ${is_body}
+            then
+                body+="${line}\n"
+            else
+                [ ! "${line}" ] && { is_body=true ; continue ; }
+                case "${line}" in
+                    "Content-Description"*|"filename"*)
+                        name="${line#* }.eml"
+                    ;;
+                    "Content-Type"*)
+                        type=${line#* }
+                        type=${type%%;*}
+                    ;;
+                esac
+
+            fi
+        done < <(echo -ne "${attach}")
+
+        res=$(
+            request 'POST' "${path}" "${proto}" "${host}" "${port}" "${key}" \
+                "${body}" "application/octet-stream"
+        )
+
+        local token=${res#*<token>}
+        token=${token%</token>*}
+        _tokens+=( "${token},${type},${name}" )
+    done
+
+    eval "${var}"'=( "${_tokens[@]}" )'
+}
+
 request()
 {
     local method=${1}
@@ -389,64 +489,71 @@ request()
     local port=${5}
     local key=${6}
     local data=${7:-''}
+    local content_type=${8:-'text/xml; charset=UTF8'}
 
-    case "${path}" in
-        *\?*)
-            path+="&key=${key}"
-            ;;
-        *)
-            path+="?key=${key}"
-            ;;
-    esac
-
-    local cmd="nc ${host} ${port}"
+    local cmd="nc -C ${host} ${port}"
     [ "${proto}" = "https" ] && cmd="openssl s_client -crlf -connect ${host}:${port}"
 
-    eval '
     (
-        echo -ne "${method} ${path} HTTP/1.1\r\n"
+        echo -ne "${method} ${path} HTTP/1.1\n"
         echo -ne "Host: ${host}\r\n"
+        echo -ne "X-Redmine-API-Key: ${key}\n"
+        echo -ne "Connection: close\n"
 
         if [ "${data}" ] && [ "${method}" = "POST" -o "${method}" = "PUT" ]
         then
             len=$(echo -ne "${data}" | wc -c)
 
-            echo -ne "Content-Type: text/xml; charset=UTF8\r\n"
-            echo -ne "Content-Length: ${len}\r\n\r\n"
+            echo -ne "Content-Type: ${content_type}\n"
+            echo -ne "Content-Length: ${len}\n\n"
 
             echo -ne "${data}"
 
         fi
 
-        echo -ne "\r\n"
+        echo -ne "\n"
 
         sleep 1
-    ) | '${cmd}
+    ) | (
+        [ "${proto}" = "https" ] \
+            && openssl s_client -crlf -connect ${host}:${port} \
+            || nc -C ${host} ${port}
+    )
+}
+
+decode_subject_mime()
+{
+    local mimed_str="${1}"
+
+    if [[ "${mimed_str}" =~ =\? ]]
+    then
+        for cnt in {1..10}
+        do
+            local mime_info=${mimed_str#*=?}
+            mime_info=${mime_info%%?=*}
+            [ "${mimed_str}" = "${mime_info}" ] && break
+            mimed_str=$( echo "${mimed_str}" | sed -e "s/=?${mime_info}?=/$(decode_mime_string "${mime_info}")/" )
+        done
+    fi
+
+    echo "${mimed_str}"
 }
 
 decode_mime_string()
 {
-    local mimed_str=$1
+    local mimed_str="$1"
+    local mimed_info=( $( IFS='?'; arr=( ${mimed_str} ); echo "${arr[@]}" ) )
 
-    case "${mimed_str}" in
-        *=?*)
-            local mimed_info=( $( echo "${mimed_str}" | sed -e 's/\?/ /g' ) )
+    local encode=${mimed_info[0]}
+    local type=${mimed_info[1]}
+    local enc_mimed=${mimed_info[2]}
 
-            local encode=${mimed_info[1]}
-            local type=${mimed_info[2]}
-            local enc_mimed=${mimed_info[3]}
-
-            case ${type} in
-                B)
-                    echo "${enc_mimed}" | base64 -d | iconv -f "${encode}" -t 'UTF-8'
-                    ;;
-                *)
-                    return 1
-                    ;;
-            esac
+    case ${type} in
+        B)
+            echo "${enc_mimed}" | base64 -d | iconv -f "${encode}" -t 'UTF-8'
             ;;
         *)
-            echo "${mimed_str}"
+            return 1
             ;;
     esac
 
