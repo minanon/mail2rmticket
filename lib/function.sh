@@ -31,7 +31,7 @@ register_main()
     IFS=${OLD_IFS}
 
     local to=""
-    if [ -v tos ] && [ ${#tos} -ne 0 ]
+    if [ -v tos ] && [ ${#tos[@]} -ne 0 ]
     then
         for to1 in "${tos[@]}"
         do
@@ -46,7 +46,7 @@ register_main()
     fi
 
     local cc=""
-    if [ -v ccs ] && [ ${#ccs} -ne 0 ]
+    if [ -v ccs ] && [ ${#ccs[@]} -ne 0 ]
     then
         for cc1 in "${ccs[@]}"
         do
@@ -112,7 +112,7 @@ ${body}
             "${access_info[1]}" \
             "${access_info[2]}" \
             "${access_info[3]}" \
-            "\nContent-Type: message/rfc822\nfilename: ${subject}\n\n$(parse_message "${org_body}")"
+            "\nContent-Type: message/rfc822\nfilename=\"${subject}\"\n\n$(parse_message "${org_body}")"
 
         token_str='<uploads type="array">'$(
             for token_info in "${tokens[@]-}" "${attach_content}"
@@ -418,7 +418,7 @@ reqtest()
     local data=${7:-''}
 
 
-    data=$( echo "${data}" | sed -e 's//\r\n/g' )
+    data=$( echo "${data}" | sed -e 's//\n/g' )
     len=$(echo -ne "${data}" | wc -c)
 
     echo -ne "${data}" 1>&2
@@ -444,6 +444,7 @@ upload()
         local name=""
         local body=""
         local count=0
+        local encode=""
         local is_body=false
         while read -r line
         do
@@ -455,21 +456,34 @@ upload()
             else
                 [ ! "${line}" ] && { is_body=true ; continue ; }
                 case "${line}" in
-                    "Content-Description"*|"filename"*)
-                        name="${line#* }.eml"
-                    ;;
+                    "filename="*|"name="*)
+                        [ ! "${name}" ] && {
+                            name="${line#*\"}"
+                            name="${name%\"*}"
+                        }
+                        ;;
+                    "Content-Description"*)
+                        [ ! "${name}" ] && {
+                            name="${line#* }"
+                        }
+                        ;;
                     "Content-Type"*)
                         type=${line#* }
                         type=${type%%;*}
-                    ;;
+                        ;;
+                    "Content-Transfer-Encoding"*)
+                        encode=${line#* }
+                        ;;
                 esac
 
             fi
         done < <(echo -ne "${attach}")
 
+        [[ "${name}" =~ \. ]] || name+='.eml'
+
         res=$(
             request 'POST' "${path}" "${proto}" "${host}" "${port}" "${key}" \
-                "${body}" "application/octet-stream"
+                "${body}" "application/octet-stream" "${encode}"
         )
 
         local token=${res#*<token>}
@@ -490,24 +504,47 @@ request()
     local key=${6}
     local data=${7:-''}
     local content_type=${8:-'text/xml; charset=UTF8'}
+    local encode=${9:-''}
 
     local cmd="nc -C ${host} ${port}"
     [ "${proto}" = "https" ] && cmd="openssl s_client -crlf -connect ${host}:${port}"
 
     (
         echo -ne "${method} ${path} HTTP/1.1\n"
-        echo -ne "Host: ${host}\r\n"
+        echo -ne "Host: ${host}\n"
         echo -ne "X-Redmine-API-Key: ${key}\n"
         echo -ne "Connection: close\n"
 
         if [ "${data}" ] && [ "${method}" = "POST" -o "${method}" = "PUT" ]
         then
-            len=$(echo -ne "${data}" | wc -c)
+            len=$(
+                if [[ "${content_type}" =~ ^text/|message/ ]]
+                then
+                    echo -ne "${data}" | perl -p -e 's/\n/\r\n/' | wc -c
+                else
+
+                    case "${encode}" in
+                        'base64'|'BASE64')
+                            echo -n "${body}" | sed -e 's/\\n//g' | base64 -d | wc -c
+                            ;;
+                        *)
+                            echo -ne "${data}" | wc -c
+                            ;;
+                    esac
+                fi
+            )
 
             echo -ne "Content-Type: ${content_type}\n"
             echo -ne "Content-Length: ${len}\n\n"
 
-            echo -ne "${data}"
+            case "${encode}" in
+                'base64'|'BASE64')
+                    echo -n "${body}" | sed -e 's/\\n//g' | base64 -d
+                    ;;
+                *)
+                    echo -ne "${data}"
+                    ;;
+            esac
 
         fi
 
